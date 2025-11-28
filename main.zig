@@ -1,5 +1,13 @@
 const std = @import("std");
 
+const Square = struct {
+    i: u64,
+    j: u64,
+    size: u64,
+    next: ?*Square,
+    end: ?*Square,
+};
+
 fn save_array(arr: anytype, h: u64, w: u64) !void {
     const rep = 2;
     const file = try std.fs.cwd().createFile("image.pgm", .{});
@@ -68,6 +76,22 @@ fn make_connection_matrix(arr: anytype, h: u64, w: u64) void {
     }
 }
 
+fn make_connection_contex(arr: anytype, lst: anytype, h: u64, w: u64) void {
+    for (0..h) |i| {
+        for (0..w) |j| {
+            arr[i][j] = i * w + j;
+            lst[i * w + j] = Square{
+                .i = i,
+                .j = j,
+                .size = 1,
+                .next = null,
+                .end = null,
+            };
+            lst[i * w + j].end = &lst[i * w + j];
+        }
+    }
+}
+
 fn is_all_connected(arr: anytype, h: u64, w: u64) bool {
     const base = arr[0][0];
     for (0..h) |i| {
@@ -80,60 +104,61 @@ fn is_all_connected(arr: anytype, h: u64, w: u64) bool {
     return true;
 }
 
-fn update_adj(adj: anytype, old: u64, new: u64, h: u64, w: u64) void {
-    for (0..h) |i| {
-        for (0..w) |j| {
-            if (adj[i][j] == old) {
-                adj[i][j] = new;
-            }
+fn update_adj(adj: anytype, lst: anytype, old: u64, new: u64) void {
+    lst[new].size += lst[old].size;
+    var end = lst[new].end.?;
+    end.next = &lst[old];
+
+    var chsq = &lst[old];
+
+    while (true) {
+        adj[chsq.i][chsq.j] = new;
+        lst[new].end = chsq;
+        if (chsq.next == null) {
+            break;
+        } else {
+            chsq = chsq.next.?;
         }
     }
 }
 
-fn connect_up(arr: anytype, adj: anytype, h: u64, w: u64, i: u64, j: u64) bool {
+fn connect_up(arr: anytype, adj: anytype, lst: anytype, i: u64, j: u64) bool {
     if (i > 0 and adj[i][j] != adj[i - 1][j]) {
-        update_adj(adj, adj[i - 1][j], adj[i][j], h / 2, w / 2);
+        update_adj(adj, lst, adj[i - 1][j], adj[i][j]);
         arr[i * 2][j * 2 + 1] = false;
         return true;
     }
     return false;
 }
 
-fn connect_down(arr: anytype, adj: anytype, h: u64, w: u64, i: u64, j: u64) bool {
+fn connect_down(arr: anytype, adj: anytype, lst: anytype, i: u64, j: u64, h: u64) bool {
     if (i < (h / 2) - 1 and adj[i][j] != adj[i + 1][j]) {
-        update_adj(adj, adj[i + 1][j], adj[i][j], h / 2, w / 2);
+        update_adj(adj, lst, adj[i + 1][j], adj[i][j]);
         arr[i * 2 + 2][j * 2 + 1] = false;
         return true;
     }
     return false;
 }
 
-fn connect_left(arr: anytype, adj: anytype, h: u64, w: u64, i: u64, j: u64) bool {
+fn connect_left(arr: anytype, adj: anytype, lst: anytype, i: u64, j: u64) bool {
     if (j > 0 and adj[i][j] != adj[i][j - 1]) {
-        update_adj(adj, adj[i][j - 1], adj[i][j], h / 2, w / 2);
+        update_adj(adj, lst, adj[i][j - 1], adj[i][j]);
         arr[i * 2 + 1][j * 2] = false;
         return true;
     }
     return false;
 }
 
-fn connect_right(arr: anytype, adj: anytype, h: u64, w: u64, i: u64, j: u64) bool {
+fn connect_right(arr: anytype, adj: anytype, lst: anytype, i: u64, j: u64, w: u64) bool {
     if (j < w / 2 - 1 and adj[i][j] != adj[i][j + 1]) {
-        update_adj(adj, adj[i][j + 1], adj[i][j], h / 2, w / 2);
+        update_adj(adj, lst, adj[i][j + 1], adj[i][j]);
         arr[i * 2 + 1][j * 2 + 2] = false;
         return true;
     }
     return false;
 }
 
-fn connect_one(arr: anytype, adj: anytype, h: u64, w: u64) !void {
-    var prng = std.Random.DefaultPrng.init(blk: {
-        var seed: u64 = undefined;
-        try std.posix.getrandom(std.mem.asBytes(&seed));
-        break :blk seed;
-    });
-    const rand = prng.random();
-
+fn connect_one(arr: anytype, adj: anytype, lst: anytype, h: u64, w: u64, sep: *u64, rand: anytype) !void {
     var all_dir: u8 = 0;
     for (0..(h / 2)) |i| {
         for (0..(w / 2)) |j| {
@@ -141,19 +166,31 @@ fn connect_one(arr: anytype, adj: anytype, h: u64, w: u64) !void {
             while (all_dir < 15) {
                 const if_n = rand.intRangeAtMost(u8, 0, 3);
                 if (if_n % 4 == 0) {
-                    if (connect_up(arr, adj, h, w, i, j)) break;
+                    if (connect_up(arr, adj, lst, i, j)) {
+                        sep.* -= 1;
+                        break;
+                    }
                     all_dir += 1;
                 }
                 if (if_n % 4 == 1) {
-                    if (connect_down(arr, adj, h, w, i, j)) break;
+                    if (connect_down(arr, adj, lst, i, j, h)) {
+                        sep.* -= 1;
+                        break;
+                    }
                     all_dir += 2;
                 }
                 if (if_n % 4 == 2) {
-                    if (connect_left(arr, adj, h, w, i, j)) break;
+                    if (connect_left(arr, adj, lst, i, j)) {
+                        sep.* -= 1;
+                        break;
+                    }
                     all_dir += 4;
                 }
                 if (if_n % 4 == 3) {
-                    if (connect_right(arr, adj, h, w, i, j)) break;
+                    if (connect_right(arr, adj, lst, i, j, w)) {
+                        sep.* -= 1;
+                        break;
+                    }
                     all_dir += 8;
                 }
             }
@@ -162,6 +199,13 @@ fn connect_one(arr: anytype, adj: anytype, h: u64, w: u64) !void {
 }
 
 pub fn main() !void {
+    var prng = std.Random.DefaultPrng.init(blk: {
+        var seed: u64 = undefined;
+        try std.posix.getrandom(std.mem.asBytes(&seed));
+        break :blk seed;
+    });
+    const rand = prng.random();
+
     const w = 961; // should be odd
     const h = 541; // should be odd
 
@@ -171,11 +215,13 @@ pub fn main() !void {
     internal_grid(&pic, h, w);
 
     var adj: [h / 2][w / 2]u64 = undefined;
-    make_connection_matrix(&adj, h / 2, w / 2);
+    var sqrs: [(w / 2) * (h / 2)]Square = undefined;
+    make_connection_contex(&adj, &sqrs, h / 2, w / 2);
 
     var step: u64 = 0;
-    while (!is_all_connected(&adj, h / 2, w / 2)) {
-        try connect_one(&pic, &adj, h, w);
+    var sep: u64 = (h / 2) * (w / 2);
+    while (sep > 1) {
+        try connect_one(&pic, &adj, &sqrs, h, w, &sep, rand);
         step += 1;
         std.debug.print("step: {} \n", .{step});
         if (step > 1000) break;
